@@ -1,12 +1,13 @@
 import os
 import json
-import azure.cognitiveservices.speech as speechsdk
-from fastapi import FastAPI, UploadFile, File
+import asyncio
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+import azure.cognitiveservices.speech as speechsdk
 
 app = FastAPI()
 
-# Enable CORS for frontend communication
+# Enable CORS for cross-platform communication
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,35 +16,66 @@ app.add_middleware(
 )
 
 # Azure Configuration
-AZURE_SPEECH_KEY = "your_azure_key"
-AZURE_REGION = "your_region"
+AZURE_SPEECH_KEY = "YOUR_AZURE_KEY"
+AZURE_REGION = "YOUR_REGION"
 
-def text_to_morse_haptics(text: str):
-    """Converts text to vibration timings (ms). Short = 100ms, Long = 300ms."""
-    MORSE_MAP = {'A': [100, 300], 'B': [300, 100, 100, 100], 'S': [100, 100, 100]} # Simplified
+class ConnectionManager:
+    """Manages active WebSocket connections for real-time broadcasting."""
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            await connection.send_json(message)
+
+manager = ConnectionManager()
+
+def text_to_haptic_pattern(text: str):
+    """Maps text characters to vibration durations (ms)."""
+    # Simple mapping: Dot=100, Dash=300, Gap=100
+    MORSE_MAP = {'A': [100, 300], 'B': [300, 100, 100, 100], 'H': [100, 100, 100, 100]}
     pattern = []
     for char in text.upper():
         if char in MORSE_MAP:
             pattern.extend(MORSE_MAP[char])
-            pattern.append(200)  # Gap between letters
+            pattern.append(200) # Inter-character gap
     return pattern
 
-@app.post("/speech-to-haptic")
-async def speech_to_haptic(file: UploadFile = File(...)):
-    # Save temp audio file
-    with open("temp.wav", "wb") as buffer:
-        buffer.write(await file.read())
+@app.websocket("/ws/haptics")
+async def haptic_websocket(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Heartbeat logic to keep the connection alive[cite: 1]
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
-    # Azure Speech-to-Text Logic[cite: 4]
+@app.post("/translate-speech")
+async def translate_speech(file: UploadFile = File(...)):
+    """Receives audio, uses Azure to transcribe, and broadcasts haptics."""[cite: 4]
+    with open("input.wav", "wb") as f:
+        f.write(await file.read())
+
     speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_REGION)
-    audio_input = speechsdk.AudioConfig(filename="temp.wav")
-    speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_input)
+    audio_config = speechsdk.AudioConfig(filename="input.wav")
+    recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
 
-    result = speech_recognizer.recognize_once_async().get()
+    result = recognizer.recognize_once_async().get()
     
     if result.reason == speechsdk.ResultReason.RecognizedSpeech:
-        transcript = result.text
-        haptic_pattern = text_to_morse_haptics(transcript)
-        return {"transcript": transcript, "pattern": haptic_pattern}
+        pattern = text_to_haptic_pattern(result.text)
+        # Broadcast to all connected deafblind users instantly
+        await manager.broadcast({"type": "VIBRATE", "pattern": pattern, "text": result.text})
+        return {"status": "success", "text": result.text}
     
-    return {"error": "Speech not recognized"}
+    return {"status": "error", "message": "Speech not recognized"}

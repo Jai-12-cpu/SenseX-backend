@@ -3,7 +3,7 @@ import uuid
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-import azure.cognitiveservices.speech as speechsdk
+import whisper
 
 app = FastAPI()
 
@@ -14,9 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load from environment variables — never hardcode keys
-AZURE_SPEECH_KEY = "paste_your_azure_key_here"
-AZURE_REGION = "eastus"
+# Load Whisper model once at startup — not on every request
+# Options: "tiny", "base", "small", "medium", "large"
+model = whisper.load_model("base")
 
 # Full Morse code map
 MORSE_MAP = {
@@ -48,10 +48,10 @@ MORSE_MAP = {
     'Z': [300, 300, 100, 100],
 }
 
-DOT = 100    # ms — vibration for a dot
-DASH = 300   # ms — vibration for a dash
-SYMBOL_GAP = 100   # ms — silence between dot/dash within a letter
-LETTER_GAP = 300   # ms — silence between letters
+DOT = 100        # ms — vibration for a dot
+DASH = 300       # ms — vibration for a dash
+SYMBOL_GAP = 100  # ms — silence between dot/dash within a letter
+LETTER_GAP = 300  # ms — silence between letters
 
 
 class ConnectionManager:
@@ -100,11 +100,11 @@ def text_to_haptic_pattern(text: str) -> list[int]:
     for i, char in enumerate(letters):
         symbols = MORSE_MAP[char]
         for j, duration in enumerate(symbols):
-            pattern.append(duration)          # vibrate
+            pattern.append(duration)           # vibrate
             if j < len(symbols) - 1:
-                pattern.append(SYMBOL_GAP)    # pause between symbols
+                pattern.append(SYMBOL_GAP)     # pause between symbols
         if i < len(letters) - 1:
-            pattern.append(LETTER_GAP)        # pause between letters
+            pattern.append(LETTER_GAP)         # pause between letters
 
     return pattern if pattern else [200]  # fallback single buzz
 
@@ -130,7 +130,7 @@ async def haptic_websocket(websocket: WebSocket):
 @app.post("/translate-speech")
 async def translate_speech(file: UploadFile = File(...)):
     """
-    Receives a .m4a audio file, transcribes with Azure Speech,
+    Receives a .m4a audio file, transcribes with local Whisper,
     converts to haptic Morse pattern, and broadcasts to all WS clients.
     """
     # Write to a unique temp file to avoid race conditions
@@ -138,31 +138,23 @@ async def translate_speech(file: UploadFile = File(...)):
     try:
         contents = await file.read()
         with open(tmp_path, "wb") as f:
-        f.write(contents)
+            f.write(contents)
 
-        speech_config = speechsdk.SpeechConfig(
-        subscription=AZURE_SPEECH_KEY,
-        region=AZURE_REGION,
-        )
-        audio_config = speechsdk.AudioConfig(filename=tmp_path)
-        recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config,
-            audio_config=audio_config,
-        )
-
-        # Run blocking SDK call in a thread so we don't block the event loop
+        # Run blocking Whisper call in a thread so we don't block the event loop
         result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: recognizer.recognize_once_async().get()
+            None, lambda: model.transcribe(tmp_path)
         )
 
-        if result.reason == speechsdk.ResultReason.RecognizedSpeech:
-            pattern = text_to_haptic_pattern(result.text)
+        text = result["text"].strip()
+
+        if text:
+            pattern = text_to_haptic_pattern(text)
             await manager.broadcast({
                 "type": "VIBRATE",
                 "pattern": pattern,
-                "text": result.text,
+                "text": text,
             })
-            return {"status": "success", "text": result.text, "pattern": pattern}
+            return {"status": "success", "text": text, "pattern": pattern}
 
         return {"status": "error", "message": "Speech not recognized"}
 

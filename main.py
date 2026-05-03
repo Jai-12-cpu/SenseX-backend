@@ -16,7 +16,7 @@ app.add_middleware(
 
 # Load Whisper model once at startup — not on every request
 # Options: "tiny", "base", "small", "medium", "large"
-model = whisper.load_model("base")
+model = whisper.load_model("tiny")
 
 # Full Morse code map
 MORSE_MAP = {

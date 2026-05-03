@@ -1,5 +1,5 @@
 fastapi
 uvicorn
 websockets
-azure-cognitiveservices-speech
+openai-whisper
 python-multipart

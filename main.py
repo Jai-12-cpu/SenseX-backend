@@ -3,7 +3,7 @@ import uuid
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-import whisper
+from faster_whisper import WhisperModel
 
 app = FastAPI()
 
@@ -14,9 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load Whisper model once at startup — not on every request
-# Options: "tiny", "base", "small", "medium", "large"
-model = whisper.load_model("tiny")
+# faster-whisper uses much less memory than openai-whisper
+# int8 quantization keeps it well under 512MB
+model = WhisperModel("tiny", device="cpu", compute_type="int8")
 
 # Full Morse code map
 MORSE_MAP = {
@@ -130,22 +130,20 @@ async def haptic_websocket(websocket: WebSocket):
 @app.post("/translate-speech")
 async def translate_speech(file: UploadFile = File(...)):
     """
-    Receives a .m4a audio file, transcribes with local Whisper,
+    Receives a .m4a audio file, transcribes with faster-whisper,
     converts to haptic Morse pattern, and broadcasts to all WS clients.
     """
-    # Write to a unique temp file to avoid race conditions
     tmp_path = f"/tmp/{uuid.uuid4()}.m4a"
     try:
         contents = await file.read()
         with open(tmp_path, "wb") as f:
             f.write(contents)
 
-        # Run blocking Whisper call in a thread so we don't block the event loop
-        result = await asyncio.get_event_loop().run_in_executor(
+        # Run blocking faster-whisper call in a thread
+        segments, _ = await asyncio.get_event_loop().run_in_executor(
             None, lambda: model.transcribe(tmp_path)
         )
-
-        text = result["text"].strip()
+        text = " ".join([seg.text for seg in segments]).strip()
 
         if text:
             pattern = text_to_haptic_pattern(text)

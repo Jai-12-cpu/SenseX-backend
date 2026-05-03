@@ -15,8 +15,8 @@ app.add_middleware(
 )
 
 # Load from environment variables — never hardcode keys
-AZURE_SPEECH_KEY = os.environ["AZURE_SPEECH_KEY"]
-AZURE_REGION = os.environ["AZURE_REGION"]
+AZURE_SPEECH_KEY = "paste_your_azure_key_here"
+AZURE_REGION = "eastus"
 
 # Full Morse code map
 MORSE_MAP = {

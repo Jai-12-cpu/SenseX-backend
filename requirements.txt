@@ -1,5 +1,5 @@
 fastapi
 uvicorn
 websockets
-openai-whisper
+faster-whisper
 python-multipart

@@ -134,15 +134,15 @@ async def translate_speech(file: UploadFile = File(...)):
     converts to haptic Morse pattern, and broadcasts to all WS clients.
     """
     # Write to a unique temp file to avoid race conditions
-    tmp_path = f"/tmp/{uuid.uuid4()}.wav"
+    tmp_path = f"/tmp/{uuid.uuid4()}.m4a"
     try:
         contents = await file.read()
         with open(tmp_path, "wb") as f:
-            f.write(contents)
+        f.write(contents)
 
         speech_config = speechsdk.SpeechConfig(
-            subscription=AZURE_SPEECH_KEY,
-            region=AZURE_REGION,
+        subscription=AZURE_SPEECH_KEY,
+        region=AZURE_REGION,
         )
         audio_config = speechsdk.AudioConfig(filename=tmp_path)
         recognizer = speechsdk.SpeechRecognizer(

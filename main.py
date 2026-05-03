@@ -130,7 +130,7 @@ async def haptic_websocket(websocket: WebSocket):
 @app.post("/translate-speech")
 async def translate_speech(file: UploadFile = File(...)):
     """
-    Receives a .wav audio file, transcribes with Azure Speech,
+    Receives a .m4a audio file, transcribes with Azure Speech,
     converts to haptic Morse pattern, and broadcasts to all WS clients.
     """
     # Write to a unique temp file to avoid race conditions

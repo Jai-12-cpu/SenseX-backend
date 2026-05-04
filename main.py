@@ -14,49 +14,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# faster-whisper uses much less memory than openai-whisper
-# int8 quantization keeps it well under 512MB
+# Load once at startup — tiny model fits in Render free 512MB with int8
 model = WhisperModel("tiny", device="cpu", compute_type="int8")
 
-# Full Morse code map
 MORSE_MAP = {
-    'A': [100, 300],
-    'B': [300, 100, 100, 100],
-    'C': [300, 100, 300, 100],
-    'D': [300, 100, 100],
-    'E': [100],
-    'F': [100, 100, 300, 100],
-    'G': [300, 300, 100],
-    'H': [100, 100, 100, 100],
-    'I': [100, 100],
-    'J': [100, 300, 300, 300],
-    'K': [300, 100, 300],
-    'L': [100, 300, 100, 100],
-    'M': [300, 300],
-    'N': [300, 100],
-    'O': [300, 300, 300],
-    'P': [100, 300, 300, 100],
-    'Q': [300, 300, 100, 300],
-    'R': [100, 300, 100],
-    'S': [100, 100, 100],
-    'T': [300],
-    'U': [100, 100, 300],
-    'V': [100, 100, 100, 300],
-    'W': [100, 300, 300],
-    'X': [300, 100, 100, 300],
-    'Y': [300, 100, 300, 300],
-    'Z': [300, 300, 100, 100],
+    'A': [100, 300], 'B': [300, 100, 100, 100], 'C': [300, 100, 300, 100],
+    'D': [300, 100, 100], 'E': [100], 'F': [100, 100, 300, 100],
+    'G': [300, 300, 100], 'H': [100, 100, 100, 100], 'I': [100, 100],
+    'J': [100, 300, 300, 300], 'K': [300, 100, 300], 'L': [100, 300, 100, 100],
+    'M': [300, 300], 'N': [300, 100], 'O': [300, 300, 300],
+    'P': [100, 300, 300, 100], 'Q': [300, 300, 100, 300], 'R': [100, 300, 100],
+    'S': [100, 100, 100], 'T': [300], 'U': [100, 100, 300],
+    'V': [100, 100, 100, 300], 'W': [100, 300, 300], 'X': [300, 100, 100, 300],
+    'Y': [300, 100, 300, 300], 'Z': [300, 300, 100, 100],
 }
 
-DOT = 100        # ms — vibration for a dot
-DASH = 300       # ms — vibration for a dash
-SYMBOL_GAP = 100  # ms — silence between dot/dash within a letter
-LETTER_GAP = 300  # ms — silence between letters
+SYMBOL_GAP = 100
+LETTER_GAP = 300
 
 
 class ConnectionManager:
-    """Manages active WebSocket connections for real-time broadcasting."""
-
     def __init__(self):
         self.active_connections: list[WebSocket] = []
 
@@ -69,7 +46,6 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
-        """Broadcast to all connected clients, dropping stale ones."""
         dead = []
         for connection in self.active_connections:
             try:
@@ -84,34 +60,21 @@ manager = ConnectionManager()
 
 
 def text_to_haptic_pattern(text: str) -> list[int]:
-    """
-    Converts text to a Vibration.vibrate()-compatible pattern.
-
-    Android's Vibration.vibrate(pattern) alternates between:
-      vibrate, pause, vibrate, pause, ...
-    starting with vibrate if the first value is > 0.
-
-    We encode Morse as: dot/dash, symbol_gap, dot/dash, symbol_gap...
-    with a longer letter_gap between letters.
-    """
     pattern = []
     letters = [c for c in text.upper() if c in MORSE_MAP]
-
     for i, char in enumerate(letters):
         symbols = MORSE_MAP[char]
         for j, duration in enumerate(symbols):
-            pattern.append(duration)           # vibrate
+            pattern.append(duration)
             if j < len(symbols) - 1:
-                pattern.append(SYMBOL_GAP)     # pause between symbols
+                pattern.append(SYMBOL_GAP)
         if i < len(letters) - 1:
-            pattern.append(LETTER_GAP)         # pause between letters
-
-    return pattern if pattern else [200]  # fallback single buzz
+            pattern.append(LETTER_GAP)
+    return pattern if pattern else [200]
 
 
 @app.get("/health")
 async def health():
-    """Health check endpoint for Render uptime monitoring."""
     return {"status": "ok"}
 
 
@@ -129,17 +92,12 @@ async def haptic_websocket(websocket: WebSocket):
 
 @app.post("/translate-speech")
 async def translate_speech(file: UploadFile = File(...)):
-    """
-    Receives a .m4a audio file, transcribes with faster-whisper,
-    converts to haptic Morse pattern, and broadcasts to all WS clients.
-    """
     tmp_path = f"/tmp/{uuid.uuid4()}.m4a"
     try:
         contents = await file.read()
         with open(tmp_path, "wb") as f:
             f.write(contents)
 
-        # Run blocking faster-whisper call in a thread
         segments, _ = await asyncio.get_event_loop().run_in_executor(
             None, lambda: model.transcribe(tmp_path)
         )
@@ -157,6 +115,5 @@ async def translate_speech(file: UploadFile = File(...)):
         return {"status": "error", "message": "Speech not recognized"}
 
     finally:
-        # Always clean up the temp file
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
